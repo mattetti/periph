@@ -28,10 +28,12 @@ type LayoutFunc func(idx int) (byteIDX int, mask byte)
 
 // Dev is a handle to a ht16k33.
 type Dev struct {
-	c             conn.Conn
-	opts          Opts
-	displayBuffer [8]byte
-	Layout        LayoutFunc
+	c              conn.Conn
+	opts           Opts
+	displayBuffer  [8]byte
+	lastKeysBuffer [6]byte
+	keysBuffer     [6]byte
+	Layout         LayoutFunc
 }
 
 func (d *Dev) String() string {
@@ -58,9 +60,10 @@ func NewI2C(b i2c.Bus, opts *Opts) (*Dev, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("ht16k33: Connected via I²C address: %#x", addr)
-	d.ClearAll()
-	return d, nil
+	if opts.Debug {
+		log.Printf("ht16k33: Connecting to address: %#x\n", addr)
+	}
+	return d, d.ClearAll()
 }
 
 func makeDev(c conn.Conn, opts *Opts) (*Dev, error) {
@@ -68,8 +71,11 @@ func makeDev(c conn.Conn, opts *Opts) (*Dev, error) {
 		c:    c,
 		opts: *opts,
 	}
-	if d.opts.Fn == nil {
-		d.opts.Fn = AdafruitTrellisLayout
+	if d.opts.LEDMap == nil {
+		d.opts.LEDMap = AdafruitTrellisLEDLayout
+	}
+	if d.opts.ButtonMap == nil {
+		d.opts.ButtonMap = AdafruitTrellisButtonLayout
 	}
 
 	// Turn on the oscillator
@@ -98,7 +104,7 @@ func makeDev(c conn.Conn, opts *Opts) (*Dev, error) {
 // SetLED sets one of the 128n LEDs as on or off.
 // WriteDisplay needs to be called for this change to make effect.
 func (d *Dev) SetLED(idx int, on bool) {
-	pos, mask := d.opts.Fn(idx)
+	pos, mask := d.opts.LEDMap(idx)
 	if on {
 		d.displayBuffer[pos] |= mask & 0xff
 	} else {
@@ -109,14 +115,7 @@ func (d *Dev) SetLED(idx int, on bool) {
 // ClearAll resets turns off all the LEDs
 func (d *Dev) ClearAll() error {
 	d.displayBuffer = [8]byte{}
-	var err error
-	if err = d.c.Tx([]byte{0x00}, nil); err != nil {
-		return wrapf("failed to turn on interrupt: %v", err)
-	}
-	if err = d.c.Tx(make([]byte, 8), nil); err != nil {
-		return wrapf("failed to transmit display state: %v", err)
-	}
-	return nil
+	return d.WriteDisplay()
 }
 
 // WriteDisplay applies the LED changes.
@@ -127,6 +126,36 @@ func (d *Dev) WriteDisplay() error {
 		return wrapf("failed to transmit display state: %v", err)
 	}
 	return nil
+}
+
+// IsPressed returns true if the button at the passed index was just pressed (since last read)
+func (d *Dev) IsPressed(idx int) bool {
+	if idx > 15 || d.opts.ButtonMap == nil {
+		return false
+	}
+	pos, mask := d.opts.ButtonMap(idx)
+	return d.keysBuffer[pos]&mask > 0
+}
+
+// WasPressed returns true if the button at the passed index was pressed.
+func (d *Dev) WasPressed(idx int) bool {
+	if idx > 15 || d.opts.ButtonMap == nil {
+		return false
+	}
+	pos, mask := d.opts.ButtonMap(idx)
+	return d.lastKeysBuffer[pos]&mask > 0
+}
+
+// WasJustReleased returns true if the button at the passed index was pressed and is
+// now released.
+func (d *Dev) WasJustReleased(idx int) bool {
+	return d.WasPressed(idx) && !d.IsPressed(idx)
+}
+
+// ReadKeys gets the raw data for the keys buffer (and resets it).
+func (d *Dev) ReadKeys() error {
+	copy(d.lastKeysBuffer[:], d.keysBuffer[:])
+	return d.c.Tx([]byte{0x40}, d.keysBuffer[:])
 }
 
 func wrapf(format string, a ...interface{}) error {

@@ -11,9 +11,12 @@ type Opts struct {
 	// I2CAddr is the I²C slave address to use. It can only used on creation of
 	// an I²C-device. Its default value is 0x70. It can be set to other values
 	I2CAddr uint16
-	// Fn is the layout function converting a LED index into a message
+	// LEDMap is the layout function converting a LED index into a message
 	// pos/bitmap
-	Fn LayoutFunc
+	LEDMap LayoutFunc
+	// ButtonMap is the layout function returning the position and bitmap of the
+	// specific key address.
+	ButtonMap LayoutFunc
 }
 
 func (o *Opts) i2cAddr() (uint16, error) {
@@ -27,7 +30,8 @@ func (o *Opts) i2cAddr() (uint16, error) {
 // DefaultOpts returns a pointer to a new Opts with the default option values.
 func DefaultOpts() *Opts {
 	return &Opts{
-		I2CAddr: 0x70,
-		Fn:      AdafruitTrellisLayout,
+		I2CAddr:   0x70,
+		LEDMap:    AdafruitTrellisLEDLayout,
+		ButtonMap: AdafruitTrellisButtonLayout,
 	}
 }
